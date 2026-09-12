@@ -1142,8 +1142,17 @@ function start(){
   openTab(favs.length ? 'fav' : 'live');
 }
 
+/* proxy.py --m3u ile başlatıldıysa ayar sayfaya gömülü gelir; televizyonun
+   tarayıcısında hiçbir şey yazmadan liste açılsın diye. Cihazda kayıtlı
+   ayar varsa ona dokunmayız. */
+const preset = window.__PRESET;
+
 if (isPairURL()){
   phoneMode(pairParams());       // telefon: QR ile açıldı
+} else if (preset && preset.mode === 'm3u' && !loadCfg()){
+  applyMode('m3u');
+  $('#i_m3u').value = preset.m3u;
+  connectM3U();
 } else if (loadCfg()){
   applyMode(cfg.mode || 'xtream');
   $('#i_srv').value = cfg.srv;

@@ -25,6 +25,8 @@ Aracı sunucu (ntfy.sh) yalnızca çözülemeyen şifreli metni görür, barınd
 sunucusunun kayıtlarında da anahtar görünmez.
 
 > QR yalnızca `https` üzerinden çalışır (tarayıcı WebCrypto kısıtı).
+> Televizyonun tarayıcısında düz `http` kullanıyorsan QR yerine
+> `proxy.py --m3u` ile ayarı sayfaya gömmek en pratiği.
 > Player'ı düz `http` ile (örn. `proxy.py` üzerinden) açarsan QR devre dışı
 > kalır ve elle giriş formunu kullanman gerekir — uygulama bunu ekranda söyler.
 
@@ -80,6 +82,13 @@ televizyonda açmanı sağlar.
 
 ```bash
 python3 proxy.py --upstream http://SUNUCU:PORT
+```
+
+Televizyonun tarayıcısında hiçbir şey yazmak istemiyorsan listeyi de ver —
+ayar sayfaya gömülür, TV'de adresi açman yeter:
+
+```bash
+python3 proxy.py --upstream http://SUNUCU:PORT --m3u "http://SUNUCU:PORT/get.php?username=...&password=...&type=m3u_plus"
 ```
 
 Ekrana yazdığı adresi (`http://192.168.x.x:8099/`) TV'nin tarayıcısında,

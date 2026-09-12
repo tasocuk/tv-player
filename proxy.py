@@ -19,6 +19,7 @@ Not: Bu makine açık olduğu sürece çalışır. 7/24 istiyorsan
 """
 
 import argparse
+import json
 import os
 import re
 import socket
@@ -30,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UPSTREAM = ""
+PRESET = None          # TV'de hiçbir şey yazmamak için sayfaya gömülen ayar
 UA = "VLC/3.0.20 LibVLC/3.0.20"
 HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -97,6 +99,14 @@ class Handler(BaseHTTPRequestHandler):
         }.get(os.path.splitext(full)[1], "application/octet-stream")
 
         data = open(full, "rb").read()
+
+        # index.html servis edilirken ayarı sayfaya göm: televizyonun
+        # tarayıcısında hiçbir şey yazmadan liste açılsın.
+        if PRESET and full.endswith("index.html"):
+            tag = ('<script>window.__PRESET=%s;</script>'
+                   % json.dumps(PRESET)).encode()
+            data = data.replace(b"</head>", tag + b"</head>", 1)
+
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -170,13 +180,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global UPSTREAM
+    global UPSTREAM, PRESET
     ap = argparse.ArgumentParser()
     ap.add_argument("--upstream", required=True, help="http://sunucu:port")
     ap.add_argument("--port", type=int, default=8099)
+    ap.add_argument("--m3u", default="",
+                    help="M3U liste adresi; verilirse sayfaya gömülür ve "
+                         "televizyonda elle yazmak gerekmez")
     a = ap.parse_args()
 
     UPSTREAM = a.upstream.rstrip("/")
+    if a.m3u:
+        PRESET = {"mode": "m3u", "m3u": a.m3u}
     ip = lan_ip()
 
     print("")
@@ -187,6 +202,9 @@ def main():
     print("  Player'daki 'Sunucu adresi' alanına da aynı adresi yaz:")
     print("             http://%s:%d" % (ip, a.port))
     print("")
+    if PRESET:
+        print("  Ayar sayfaya gömüldü: televizyonda adresi açman yeterli.")
+        print("")
     print("  Durdurmak için Ctrl+C")
     print("")
 
