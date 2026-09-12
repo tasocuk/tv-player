@@ -11,12 +11,18 @@ Titan OS Chromium üstünde çalıştığı için televizyonda yerel uygulama gi
 
 ## Telefondan giriş (QR)
 
-TV ekranındaki QR kodu telefonla okut, bilgileri telefon klavyesiyle yaz,
-"TV'ye gönder" de. Bilgiler TV'de belirir ve bağlantı otomatik kurulur.
+TV ekranında bir QR kodu ve altında 8 karakterlik bir kod çıkar.
 
-Aktarım uçtan uca şifrelidir: TV her açılışta rastgele bir AES-256 anahtarı
-üretir, anahtar yalnızca QR'ın içindedir. Aracı sunucu (ntfy.sh) sadece
-çözülemeyen şifreli metni görür.
+1. QR'ı telefonla okut — kod otomatik dolar.
+2. Okuyucu adresi bozarsa ana sayfadaki **"Telefondan bakıyorum · kodu gireyim"**
+   düğmesine bas ve TV'deki kodu yaz. (Bazı QR okuyucuları adresin `#`
+   sonrasını atar; bu yol her durumda çalışır.)
+3. Bilgileri telefon klavyesiyle yaz, "TV'ye gönder" de.
+
+Aktarım uçtan uca şifrelidir. Kanal adı ve AES-256 anahtarı **kodun kendisinden**
+türetilir (SHA-256 + PBKDF2, 200.000 tur); kod hiçbir sunucuya gönderilmez.
+Aracı sunucu (ntfy.sh) yalnızca çözülemeyen şifreli metni görür, barındırma
+sunucusunun kayıtlarında da anahtar görünmez.
 
 > QR yalnızca `https` üzerinden çalışır (tarayıcı WebCrypto kısıtı).
 > Player'ı düz `http` ile (örn. `proxy.py` üzerinden) açarsan QR devre dışı

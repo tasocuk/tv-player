@@ -60,10 +60,21 @@
   .pane.right p{color:var(--dim);font-size:15px;line-height:1.45;margin-bottom:18px}
   #qr{background:#fff;padding:12px;border-radius:12px;display:inline-block;line-height:0}
   #qr svg{width:210px;height:210px;display:block}
+  #qrcode{
+    margin-top:14px;font-size:30px;font-weight:700;letter-spacing:.16em;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg)
+  }
+  #qrcode small{display:block;font-size:14px;font-weight:400;letter-spacing:normal;
+                color:var(--dim);margin-bottom:4px}
   #qrstat{margin-top:16px;font-size:15px;color:var(--dim);min-height:22px}
   #qrstat.wait{color:var(--acc)}
   #qrstat.good{color:var(--ok)}
   #qrstat.bad{color:var(--err)}
+  #i_phone{
+    margin-top:14px;width:100%;padding:11px;background:transparent;
+    border:1px solid var(--line);border-radius:9px;color:var(--dim);
+    font-size:15px;cursor:pointer
+  }
 
   /* telefon eşleştirme ekranı */
   #pair{position:fixed;inset:0;background:var(--bg);display:none;
@@ -186,7 +197,9 @@
       <h2>Telefonla gir</h2>
       <p>Kodu telefonunla okut, bilgileri orada yaz. Kumandayla uğraşma.</p>
       <div id="qr"></div>
+      <div id="qrcode"></div>
       <div id="qrstat"></div>
+      <button id="i_phone" class="f">Telefondan bakıyorum · kodu gireyim</button>
     </div>
   </div>
 </div>
@@ -197,7 +210,11 @@
     <h1>Televizyona gönder</h1>
     <p class="sub">Bilgiler şifrelenerek yalnızca TV'ne iletilir.</p>
 
-    <div class="modes">
+    <label for="p_code">Televizyondaki kod</label>
+    <input id="p_code" placeholder="ÖRN: K7QM3XPZ" autocomplete="off" spellcheck="false"
+           autocapitalize="characters" maxlength="12">
+
+    <div class="modes" style="margin-top:22px">
       <button class="mode f on" data-m="xtream">Kullanıcı adı / şifre</button>
       <button class="mode f" data-m="m3u">M3U liste</button>
     </div>
@@ -464,6 +481,13 @@ function applyMode(m, scope){
   $(tv ? '#f_m3u'    : '#pf_m3u'   ).style.display = m === 'm3u'    ? '' : 'none';
 }
 $$('#login .mode').forEach(b => b.addEventListener('click', () => applyMode(b.dataset.m)));
+
+// QR okuyucu adresteki '#' sonrasını atarsa telefon düz ana sayfaya düşer.
+// Bu düğme oradan eşleştirme formuna geçirir; kod elle yazılır.
+$('#i_phone').addEventListener('click', () => {
+  if (pairES){ pairES.close(); pairES = null; }
+  phoneMode({ code:'' });
+});
 
 $('#i_go').addEventListener('click', connect);
 $$('#login input').forEach(i =>
@@ -915,18 +939,35 @@ const b64u = {
   }
 };
 
-function randomTopic(){
-  const a = new Uint8Array(12);
+/* Karıştırılması kolay harfler (I O 0 1) alfabede yok. */
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function randomCode(){
+  const a = new Uint8Array(8);
   crypto.getRandomValues(a);
-  return 'tvp' + b64u.enc(a).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return [...a].map(x => ALPHABET[x % ALPHABET.length]).join('');
 }
 
-async function newKey(){
-  const k = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, true, ['encrypt','decrypt']);
-  return { key:k, str: b64u.enc(await crypto.subtle.exportKey('raw', k)) };
+function normCode(v){
+  return (v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
-function keyFrom(str){
-  return crypto.subtle.importKey('raw', b64u.dec(str), 'AES-GCM', false, ['encrypt','decrypt']);
+
+/* Kodun kendisi hiçbir yere yazılmaz: kanal adı da şifreleme anahtarı da
+   ondan türetilir. Sunucu kayıtlarında yalnızca türetilmiş kanal adı görünür. */
+async function derive(code){
+  const bytes = new TextEncoder().encode(code);
+
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const topic  = 'tvp' + [...new Uint8Array(digest)].slice(0, 9)
+                   .map(b => b.toString(36).padStart(2,'0')).join('').slice(0, 18);
+
+  const base = await crypto.subtle.importKey('raw', bytes, 'PBKDF2', false, ['deriveKey']);
+  const key  = await crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt:new TextEncoder().encode('tvplayer|' + topic),
+      iterations:200000, hash:'SHA-256' },
+    base, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+
+  return { topic, key };
 }
 async function seal(key, obj){
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -952,18 +993,22 @@ async function startPairing(){
     return;
   }
   try{
-    const topic = randomTopic();
-    const kk    = await newKey();
-    const url   = location.origin + location.pathname + '#pair=' + topic + '~' + kk.str;
-    window.__pairUrl = url;   // QR okunmazsa adres elle de açılabilsin
+    const code = randomCode();
+    const kk   = await derive(code);
+    const url  = location.origin + location.pathname + '#c=' + code;
+    window.__pairUrl = url;
+    window.__pairCode = code;
 
     const qr = qrcode(0, 'M');
     qr.addData(url);
     qr.make();
     $('#qr').innerHTML = qr.createSvgTag({ cellSize:6, margin:1, scalable:true });
+    $('#qrcode').innerHTML = '<small>Kod otomatik gelmezse bunu yaz</small>' + code;
 
     stat.className = 'wait';
     stat.textContent = 'Telefon bekleniyor…';
+
+    const topic = kk.topic;
 
     if (pairES) pairES.close();
     pairES = new EventSource(RELAY + '/' + topic + '/sse');
@@ -1006,9 +1051,15 @@ async function startPairing(){
 
 /* ---- telefon tarafı ---- */
 
+/* Kod hem '#c=' hem '?c=' ile kabul edilir; ikisi de düşerse
+   kullanıcı TV'deki kodu elle yazar. */
 function pairParams(){
-  const m = /[#&]pair=([^~&]+)~([^&]+)/.exec(location.hash);
-  return m ? { topic:m[1], key:m[2] } : null;
+  const m = /[#?&]c=([A-Za-z0-9]+)/.exec(location.hash + location.search);
+  return { code: m ? normCode(m[1]) : '' };
+}
+
+function isPairURL(){
+  return /[#?&](c|pair)=/.test(location.hash + location.search);
 }
 
 let phoneModeSel = 'xtream';
@@ -1039,14 +1090,22 @@ async function phoneSend(pp){
       m.className = 'show bad'; m.textContent = 'Sunucu ve kullanıcı adı gerekli.'; return;
     }
   }
+  const code = normCode($('#p_code').value);
+  if (code.length < 6){
+    m.className = 'show bad'; m.textContent = 'Televizyondaki kodu yaz.'; return;
+  }
+
   m.className = 'show'; m.textContent = 'Gönderiliyor…';
   try{
-    const key  = await keyFrom(pp.key);
-    const blob = await seal(key, body);
-    const r = await fetch(RELAY + '/' + pp.topic, { method:'POST', body:blob });
+    const kk   = await derive(code);
+    const blob = await seal(kk.key, body);
+    const r = await fetch(RELAY + '/' + kk.topic, { method:'POST', body:blob });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     m.className = 'show good';
-    m.textContent = '✓ Gönderildi. Televizyona bakabilirsin.';
+    // Yanlış kodda mesaj başka bir kanala gider ve TV'ye hiç ulaşmaz;
+    // bu yüzden "gönderildi" demekle yetinmiyoruz.
+    m.textContent = '✓ Gönderildi. Televizyonda kanallar birkaç saniye içinde '
+                  + 'gelmezse kodu yanlış yazmış olabilirsin.';
     $('#p_pwd').value = '';
     $('#p_m3u').value = '';
   }catch(e){
@@ -1058,6 +1117,11 @@ async function phoneSend(pp){
 function phoneMode(pp){
   $('#login').style.display = 'none';
   $('#pair').classList.add('on');
+  if (pp.code){
+    $('#p_code').value = pp.code;
+    // Kod adresten geldi; adres çubuğunda kalmasın.
+    history.replaceState(null, '', location.pathname);
+  }
   $$('#pair .mode').forEach(b => b.addEventListener('click', () => {
     phoneModeSel = b.dataset.m;
     applyMode(phoneModeSel, 'phone');
@@ -1065,7 +1129,7 @@ function phoneMode(pp){
   $('#p_go').addEventListener('click', () => phoneSend(pp));
   $$('#pair input').forEach(i =>
     i.addEventListener('keydown', e => { if (e.key === 'Enter') phoneSend(pp); }));
-  $('#p_srv').focus();
+  (pp.code ? $('#p_srv') : $('#p_code')).focus();
 }
 
 /* ----------------------------------------------------------------- boot */
@@ -1076,9 +1140,8 @@ function start(){
   openTab(favs.length ? 'fav' : 'live');
 }
 
-const pp = pairParams();
-if (pp){
-  phoneMode(pp);                 // telefon: QR ile açıldı
+if (isPairURL()){
+  phoneMode(pairParams());       // telefon: QR ile açıldı
 } else if (loadCfg()){
   applyMode(cfg.mode || 'xtream');
   $('#i_srv').value = cfg.srv;
