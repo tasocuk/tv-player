@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UPSTREAM = ""
+UA = "VLC/3.0.20 LibVLC/3.0.20"
 HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "content-encoding",
@@ -108,8 +109,10 @@ class Handler(BaseHTTPRequestHandler):
     def serve_proxy(self, path, body=True):
         url = UPSTREAM + path
         req = urllib.request.Request(url, method="GET")
-        # bazı paneller User-Agent'a bakıyor
-        req.add_header("User-Agent", self.headers.get("User-Agent", "VLC/3.0.20"))
+        # Çoğu panel tarayıcı User-Agent'ını reddediyor, medya oynatıcı
+        # kimliğini kabul ediyor. Tarayıcınınkini geçirmek yerine sabitliyoruz.
+        req.add_header("User-Agent", UA)
+        req.add_header("Accept", "*/*")
         rng = self.headers.get("Range")
         if rng:
             req.add_header("Range", rng)
