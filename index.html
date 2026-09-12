@@ -6,6 +6,7 @@
 <title>TV Player</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <style>
   :root{
     --bg:#0b0d12; --panel:#141821; --panel2:#1b2130; --line:#262e3d;
@@ -50,6 +51,26 @@
     width:100%;margin-top:26px;padding:15px;background:var(--acc2);
     border:0;border-radius:10px;font-weight:600;cursor:pointer
   }
+  .card{display:flex;gap:34px;align-items:flex-start}
+  .pane{flex:1;min-width:0}
+  .pane.right{
+    flex:0 0 300px;border-left:1px solid var(--line);padding-left:30px;text-align:center
+  }
+  .pane.right h2{font-size:19px;font-weight:600;margin-bottom:6px}
+  .pane.right p{color:var(--dim);font-size:15px;line-height:1.45;margin-bottom:18px}
+  #qr{background:#fff;padding:12px;border-radius:12px;display:inline-block;line-height:0}
+  #qr svg{width:210px;height:210px;display:block}
+  #qrstat{margin-top:16px;font-size:15px;color:var(--dim);min-height:22px}
+  #qrstat.wait{color:var(--acc)}
+  #qrstat.good{color:var(--ok)}
+  #qrstat.bad{color:var(--err)}
+
+  /* telefon eşleştirme ekranı */
+  #pair{position:fixed;inset:0;background:var(--bg);display:none;
+        align-items:center;justify-content:center;z-index:55;padding:20px}
+  #pair.on{display:flex}
+  #pair .card{display:block;width:min(520px,94vw)}
+
   #msg{margin-top:18px;font-size:16px;line-height:1.5;display:none}
   #msg.show{display:block}
   #msg.bad{color:var(--err)} #msg.good{color:var(--ok)}
@@ -124,20 +145,50 @@
 <!-- ============ LOGIN ============ -->
 <div id="login">
   <div class="card">
-    <h1>TV Player</h1>
-    <p class="sub">Bilgiler yalnızca bu televizyonda saklanır.</p>
+    <div class="pane">
+      <h1>TV Player</h1>
+      <p class="sub">Bilgiler yalnızca bu televizyonda saklanır.</p>
 
-    <label for="i_srv">Sunucu adresi</label>
-    <input id="i_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false">
+      <label for="i_srv">Sunucu adresi</label>
+      <input id="i_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false">
 
-    <label for="i_usr">Kullanıcı adı</label>
-    <input id="i_usr" autocomplete="off" spellcheck="false">
+      <label for="i_usr">Kullanıcı adı</label>
+      <input id="i_usr" autocomplete="off" spellcheck="false">
 
-    <label for="i_pwd">Şifre</label>
-    <input id="i_pwd" type="password" autocomplete="off">
+      <label for="i_pwd">Şifre</label>
+      <input id="i_pwd" type="password" autocomplete="off">
 
-    <button id="i_go">Bağlan</button>
-    <div id="msg"></div>
+      <button id="i_go">Bağlan</button>
+      <div id="msg"></div>
+    </div>
+
+    <div class="pane right">
+      <h2>Telefonla gir</h2>
+      <p>Kodu telefonunla okut, bilgileri orada yaz. Kumandayla uğraşma.</p>
+      <div id="qr"></div>
+      <div id="qrstat"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TELEFON EŞLEŞTİRME ============ -->
+<div id="pair">
+  <div class="card">
+    <h1>Televizyona gönder</h1>
+    <p class="sub">Bilgiler şifrelenerek yalnızca TV'ne iletilir.</p>
+
+    <label for="p_srv">Sunucu adresi</label>
+    <input id="p_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false"
+           autocapitalize="off" inputmode="url">
+
+    <label for="p_usr">Kullanıcı adı</label>
+    <input id="p_usr" autocomplete="off" spellcheck="false" autocapitalize="off">
+
+    <label for="p_pwd">Şifre</label>
+    <input id="p_pwd" type="password" autocomplete="off">
+
+    <button id="p_go">TV'ye gönder</button>
+    <div id="pmsg"></div>
   </div>
 </div>
 
@@ -716,6 +767,150 @@ $$('#tabs .tab').forEach(b => {
   b.addEventListener('click', () => openTab(b.dataset.t));
 });
 
+/* ============================================================ eşleştirme
+   TV bir QR gösterir, telefon o adresi açıp formu doldurur.
+   Bilgiler telefonda AES-256-GCM ile şifrelenir; anahtar yalnızca
+   QR'ın içindedir. Aktarım (ntfy.sh) sadece şifreli metni görür.
+   ======================================================================= */
+
+const RELAY = 'https://ntfy.sh';
+
+const b64u = {
+  enc: buf => btoa(String.fromCharCode(...new Uint8Array(buf)))
+                .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
+  dec: str => {
+    const b = atob(str.replace(/-/g,'+').replace(/_/g,'/'));
+    const a = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+    return a;
+  }
+};
+
+function randomTopic(){
+  const a = new Uint8Array(12);
+  crypto.getRandomValues(a);
+  return 'tvp' + b64u.enc(a).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function newKey(){
+  const k = await crypto.subtle.generateKey({ name:'AES-GCM', length:256 }, true, ['encrypt','decrypt']);
+  return { key:k, str: b64u.enc(await crypto.subtle.exportKey('raw', k)) };
+}
+function keyFrom(str){
+  return crypto.subtle.importKey('raw', b64u.dec(str), 'AES-GCM', false, ['encrypt','decrypt']);
+}
+async function seal(key, obj){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key,
+               new TextEncoder().encode(JSON.stringify(obj)));
+  return b64u.enc(iv) + '.' + b64u.enc(ct);
+}
+async function unseal(key, blob){
+  const p = blob.split('.');
+  const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:b64u.dec(p[0]) }, key, b64u.dec(p[1]));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+/* ---- TV tarafı ---- */
+
+let pairES = null;
+
+async function startPairing(){
+  const stat = $('#qrstat');
+  if (!window.crypto || !crypto.subtle){
+    stat.className = 'bad';
+    stat.textContent = 'Güvenli bağlantı gerekiyor (https).';
+    return;
+  }
+  try{
+    const topic = randomTopic();
+    const kk    = await newKey();
+    const url   = location.origin + location.pathname + '#pair=' + topic + '~' + kk.str;
+    window.__pairUrl = url;   // QR okunmazsa adres elle de açılabilsin
+
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    $('#qr').innerHTML = qr.createSvgTag({ cellSize:6, margin:1, scalable:true });
+
+    stat.className = 'wait';
+    stat.textContent = 'Telefon bekleniyor…';
+
+    if (pairES) pairES.close();
+    pairES = new EventSource(RELAY + '/' + topic + '/sse');
+
+    pairES.onerror = () => {
+      if (pairES && pairES.readyState === EventSource.CLOSED){
+        stat.className = 'bad';
+        stat.textContent = 'Bağlantı koptu, sayfayı yenile.';
+      }
+    };
+    pairES.onmessage = async ev => {
+      let d;
+      try { d = JSON.parse(ev.data); } catch(e){ return; }
+      if (d.event !== 'message' || !d.message) return;
+      try{
+        const got = await unseal(kk.key, d.message);
+        pairES.close(); pairES = null;
+        $('#i_srv').value = got.srv || '';
+        $('#i_usr').value = got.usr || '';
+        $('#i_pwd').value = got.pwd || '';
+        stat.className = 'good';
+        stat.textContent = '✓ Bilgiler alındı';
+        connect();
+      }catch(e){
+        stat.className = 'bad';
+        stat.textContent = 'Çözülemedi — kodu yeniden okut.';
+      }
+    };
+  }catch(e){
+    stat.className = 'bad';
+    stat.textContent = 'QR oluşturulamadı.';
+  }
+}
+
+/* ---- telefon tarafı ---- */
+
+function pairParams(){
+  const m = /[#&]pair=([^~&]+)~([^&]+)/.exec(location.hash);
+  return m ? { topic:m[1], key:m[2] } : null;
+}
+
+async function phoneSend(pp){
+  const m    = $('#pmsg');
+  const srv0 = $('#p_srv').value.trim().replace(/\/+$/, '');
+  const body = {
+    srv: /^https?:\/\//i.test(srv0) ? srv0 : (srv0 ? 'http://' + srv0 : ''),
+    usr: $('#p_usr').value.trim(),
+    pwd: $('#p_pwd').value
+  };
+  if (!body.srv || !body.usr){
+    m.className = 'show bad'; m.textContent = 'Sunucu ve kullanıcı adı gerekli.'; return;
+  }
+  m.className = 'show'; m.textContent = 'Gönderiliyor…';
+  try{
+    const key  = await keyFrom(pp.key);
+    const blob = await seal(key, body);
+    const r = await fetch(RELAY + '/' + pp.topic, { method:'POST', body:blob });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    m.className = 'show good';
+    m.textContent = '✓ Gönderildi. Televizyona bakabilirsin.';
+    $('#p_pwd').value = '';
+  }catch(e){
+    m.className = 'show bad';
+    m.textContent = 'Gönderilemedi: ' + (e.message || e);
+  }
+}
+
+function phoneMode(pp){
+  $('#login').style.display = 'none';
+  $('#pair').classList.add('on');
+  $('#p_go').addEventListener('click', () => phoneSend(pp));
+  $$('#pair input').forEach(i =>
+    i.addEventListener('keydown', e => { if (e.key === 'Enter') phoneSend(pp); }));
+  $('#p_srv').focus();
+}
+
 /* ----------------------------------------------------------------- boot */
 
 function start(){
@@ -724,13 +919,17 @@ function start(){
   openTab(favs.length ? 'fav' : 'live');
 }
 
-if (loadCfg()){
+const pp = pairParams();
+if (pp){
+  phoneMode(pp);                 // telefon: QR ile açıldı
+} else if (loadCfg()){
   $('#i_srv').value = cfg.srv;
   $('#i_usr').value = cfg.usr;
   $('#i_pwd').value = cfg.pwd;
-  start();
+  start();                       // TV: bilgiler zaten kayıtlı
 } else {
   $('#i_srv').focus();
+  startPairing();                // TV: ilk kurulum, QR göster
 }
 
 /* Ayarlara dönüş: uzun süre hiçbir liste yoksa kullanıcı sıfırlayabilsin */
