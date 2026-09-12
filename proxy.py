@@ -32,12 +32,55 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 UPSTREAM = ""
 PRESET = None          # TV'de hiçbir şey yazmamak için sayfaya gömülen ayar
+PRESET_FILE = ""       # ayarın diske yazıldığı yer (yeniden başlatınca kaybolmasın)
 UA = "VLC/3.0.20 LibVLC/3.0.20"
 HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "content-encoding",
     "content-length",
 }
+
+
+SETUP_PAGE = """<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>TV Kurulum</title>
+<style>
+ body{background:#0b0d12;color:#e8ecf4;font:400 17px/1.45 system-ui,-apple-system,sans-serif;
+      margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+ .c{width:min(680px,100%);background:#141821;border:1px solid #262e3d;border-radius:16px;padding:30px}
+ h1{font-size:25px;margin:0 0 6px} p.s{color:#8a93a6;margin:0 0 22px}
+ label{display:block;color:#8a93a6;font-size:14px;margin:18px 0 6px}
+ input{width:100%;padding:13px 14px;background:#1b2130;border:1px solid #262e3d;
+       border-radius:9px;color:inherit;font:inherit;box-sizing:border-box}
+ button{width:100%;margin-top:22px;padding:15px;background:#1f6fd0;border:0;border-radius:9px;
+        color:#fff;font:600 17px system-ui;cursor:pointer}
+ #m{margin-top:18px;font-size:16px;display:none} #m.on{display:block}
+ .ok{color:#3ecf8e} .bad{color:#ff5c5c}
+ code{background:#000;padding:2px 7px;border-radius:5px;font-size:15px}
+</style></head><body><div class="c">
+ <h1>Televizyon kurulumu</h1>
+ <p class="s">Kaydet dedikten sonra televizyonda adresi açman yeterli — orada hiçbir şey yazmayacaksın.</p>
+ <label for="u">M3U liste adresi</label>
+ <input id="u" placeholder="http://sunucu.com:80/get.php?username=...&amp;type=m3u_plus" spellcheck="false">
+ <button id="b">Kaydet</button>
+ <div id="m"></div>
+</div><script>
+ // Bu sayfa player ile aynı adreste olduğu için, daha önce girilmiş ayar
+ // tarayıcıda kayıtlıysa doğrudan buraya gelir; kullanıcı yapıştırmak zorunda kalmaz.
+ try{ var c = JSON.parse(localStorage.getItem('cfg')||'null');
+      if (c && c.m3u) document.getElementById('u').value = c.m3u; }catch(e){}
+ var m = document.getElementById('m');
+ document.getElementById('b').onclick = async function(){
+   var v = document.getElementById('u').value.trim();
+   if(!v){ m.className='on bad'; m.textContent='Adres boş.'; return; }
+   m.className='on'; m.textContent='Kaydediliyor…';
+   try{
+     var r = await fetch('/__preset',{method:'POST',body:JSON.stringify({m3u:v})});
+     if(!r.ok) throw new Error('HTTP '+r.status);
+     m.className='on ok';
+     m.innerHTML='✓ Kaydedildi. Şimdi televizyonda <code>'+location.host+'</code> adresini aç.';
+   }catch(e){ m.className='on bad'; m.textContent='Kaydedilemedi: '+e.message; }
+ };
+</script></body></html>"""
 
 
 def lan_ip() -> str:
@@ -74,9 +117,48 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET(body=False)
 
+    def do_POST(self):
+        global PRESET
+        if self.path.split("?")[0] != "/__preset":
+            self.send_error(404, "not found")
+            return
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            data = json.loads(self.rfile.read(n).decode("utf-8"))
+            url = (data.get("m3u") or "").strip()
+            if not url:
+                raise ValueError("m3u bos")
+            PRESET = {"mode": "m3u", "m3u": url}
+            if PRESET_FILE:
+                with open(PRESET_FILE, "w", encoding="utf-8") as f:
+                    json.dump(PRESET, f)
+            out = b'{"ok":true}'
+            self.send_response(200)
+        except Exception as e:
+            out = json.dumps({"ok": False, "error": str(e)}).encode()
+            self.send_response(400)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.cors()
+        self.end_headers()
+        self.wfile.write(out)
+
     # --------------------------------------------------------------- main
     def do_GET(self, body=True):
         path = self.path
+
+        # 0) kurulum sayfası
+        if path.split("?")[0] in ("/__setup", "/__setup/"):
+            body_bytes = SETUP_PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            self.cors()
+            self.end_headers()
+            if body:
+                self.wfile.write(body_bytes)
+            return
 
         # 1) statik dosyalar (player'ın kendisi)
         if path == "/" or path.startswith("/index.html") or path.startswith("/assets"):
@@ -180,7 +262,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global UPSTREAM, PRESET
+    global UPSTREAM, PRESET, PRESET_FILE
     ap = argparse.ArgumentParser()
     ap.add_argument("--upstream", required=True, help="http://sunucu:port")
     ap.add_argument("--port", type=int, default=8099)
@@ -190,8 +272,15 @@ def main():
     a = ap.parse_args()
 
     UPSTREAM = a.upstream.rstrip("/")
+    PRESET_FILE = os.path.join(HERE, "preset.json")
     if a.m3u:
         PRESET = {"mode": "m3u", "m3u": a.m3u}
+    elif os.path.isfile(PRESET_FILE):
+        try:
+            with open(PRESET_FILE, encoding="utf-8") as f:
+                PRESET = json.load(f)
+        except Exception:
+            PRESET = None
     ip = lan_ip()
 
     print("")
@@ -205,6 +294,8 @@ def main():
     if PRESET:
         print("  Ayar sayfaya gömüldü: televizyonda adresi açman yeterli.")
         print("")
+    print("  Ayarı tarayıcıdan yapmak için: http://%s:%d/__setup" % (ip, a.port))
+    print("")
     print("  Durdurmak için Ctrl+C")
     print("")
 
