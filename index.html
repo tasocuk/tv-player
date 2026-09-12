@@ -373,12 +373,14 @@ function showMsg(text, cls){
 
 function diagnose(err){
   const pageHTTPS = location.protocol === 'https:';
-  const srvHTTP   = /^http:\/\//i.test(cfg.srv);
+  const target    = cfg.mode === 'm3u' ? cfg.m3u : cfg.srv;
+  const srvHTTP   = /^http:\/\//i.test(target);
 
   if (pageHTTPS && srvHTTP){
-    return 'Sayfa <code>https</code> üzerinden açık ama sunucun <code>http</code>. '
-         + 'Tarayıcı bu karışımı engelliyor.<br><br>Çözüm: player\'ı <code>http</code> ile '
-         + 'barındır, ya da sunucunun <code>https</code> adresini kullan.';
+    return 'Sayfa <code>https</code> üzerinden açık ama adresin <code>http</code>. '
+         + 'Tarayıcı bu karışımı engelliyor — sunucu değil, tarayıcı durduruyor.'
+         + '<br><br>Çözüm: player\'ı <code>http</code> ile barındır '
+         + '(<code>proxy.py</code>), ya da <code>https</code> bir adres kullan.';
   }
   return 'Sunucuya ulaşılamadı: <code>' + String(err.message || err) + '</code>'
        + '<br><br>Muhtemel sebepler: adres/port yanlış, sunucu CORS izni vermiyor, '
