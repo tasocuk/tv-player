@@ -4,8 +4,34 @@ Xtream Codes hesabınla çalışan, tek dosyalık HTML5 IPTV player.
 Titan OS Chromium üstünde çalıştığı için televizyonda yerel uygulama gibi açılır.
 
 * Ücretsiz, süre sınırı yok, reklam yok
-* Kullanıcı adı/şifre **sadece TV'nin kendi belleğinde** tutulur (`localStorage`)
+* İki giriş yolu: **Xtream Codes** (sunucu/kullanıcı/şifre) veya **M3U liste adresi**
+* Bilgiler **sadece TV'nin kendi belleğinde** tutulur (`localStorage`)
 * Canlı TV + Filmler + Diziler + Favoriler, EPG bilgisi, kumanda navigasyonu
+* **QR ile telefondan giriş** — kumandayla yazmaya gerek yok
+
+## Telefondan giriş (QR)
+
+TV ekranındaki QR kodu telefonla okut, bilgileri telefon klavyesiyle yaz,
+"TV'ye gönder" de. Bilgiler TV'de belirir ve bağlantı otomatik kurulur.
+
+Aktarım uçtan uca şifrelidir: TV her açılışta rastgele bir AES-256 anahtarı
+üretir, anahtar yalnızca QR'ın içindedir. Aracı sunucu (ntfy.sh) sadece
+çözülemeyen şifreli metni görür.
+
+> QR yalnızca `https` üzerinden çalışır (tarayıcı WebCrypto kısıtı).
+> Player'ı düz `http` ile (örn. `proxy.py` üzerinden) açarsan QR devre dışı
+> kalır ve elle giriş formunu kullanman gerekir — uygulama bunu ekranda söyler.
+
+## M3U mi, Xtream mı?
+
+| | Ne gerekir | Notlar |
+|---|---|---|
+| **Xtream** | sunucu + kullanıcı + şifre | EPG çalışır, diziler sezon/bölüm ağacı olarak gelir |
+| **M3U** | tek bir liste adresi | EPG yok; kanallar `group-title`'a göre gruplanır |
+
+M3U listesinde `/movie/` geçen adresler Filmler, `/series/` geçenler Diziler
+sekmesine düşer, geri kalanı Canlı TV olur. Liste bellekte tutulur, her
+açılışta yeniden indirilir.
 
 ---
 

@@ -71,6 +71,13 @@
   #pair.on{display:flex}
   #pair .card{display:block;width:min(520px,94vw)}
 
+  .modes{display:flex;gap:8px;margin-bottom:6px}
+  .modes .mode{
+    flex:1;padding:10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;cursor:pointer;color:var(--dim);font-size:16px
+  }
+  .modes .mode.on{background:var(--acc2);border-color:var(--acc);color:#fff}
+
   #msg{margin-top:18px;font-size:16px;line-height:1.5;display:none}
   #msg.show{display:block}
   #msg.bad{color:var(--err)} #msg.good{color:var(--ok)}
@@ -149,14 +156,27 @@
       <h1>TV Player</h1>
       <p class="sub">Bilgiler yalnızca bu televizyonda saklanır.</p>
 
-      <label for="i_srv">Sunucu adresi</label>
-      <input id="i_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false">
+      <div class="modes">
+        <button class="mode f on" data-m="xtream">Kullanıcı adı / şifre</button>
+        <button class="mode f" data-m="m3u">M3U liste</button>
+      </div>
 
-      <label for="i_usr">Kullanıcı adı</label>
-      <input id="i_usr" autocomplete="off" spellcheck="false">
+      <div id="f_xtream">
+        <label for="i_srv">Sunucu adresi</label>
+        <input id="i_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false">
 
-      <label for="i_pwd">Şifre</label>
-      <input id="i_pwd" type="password" autocomplete="off">
+        <label for="i_usr">Kullanıcı adı</label>
+        <input id="i_usr" autocomplete="off" spellcheck="false">
+
+        <label for="i_pwd">Şifre</label>
+        <input id="i_pwd" type="password" autocomplete="off">
+      </div>
+
+      <div id="f_m3u" style="display:none">
+        <label for="i_m3u">M3U liste adresi</label>
+        <input id="i_m3u" placeholder="http://.../get.php?username=...&amp;type=m3u_plus"
+               autocomplete="off" spellcheck="false">
+      </div>
 
       <button id="i_go">Bağlan</button>
       <div id="msg"></div>
@@ -177,15 +197,28 @@
     <h1>Televizyona gönder</h1>
     <p class="sub">Bilgiler şifrelenerek yalnızca TV'ne iletilir.</p>
 
-    <label for="p_srv">Sunucu adresi</label>
-    <input id="p_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false"
-           autocapitalize="off" inputmode="url">
+    <div class="modes">
+      <button class="mode f on" data-m="xtream">Kullanıcı adı / şifre</button>
+      <button class="mode f" data-m="m3u">M3U liste</button>
+    </div>
 
-    <label for="p_usr">Kullanıcı adı</label>
-    <input id="p_usr" autocomplete="off" spellcheck="false" autocapitalize="off">
+    <div id="pf_xtream">
+      <label for="p_srv">Sunucu adresi</label>
+      <input id="p_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false"
+             autocapitalize="off" inputmode="url">
 
-    <label for="p_pwd">Şifre</label>
-    <input id="p_pwd" type="password" autocomplete="off">
+      <label for="p_usr">Kullanıcı adı</label>
+      <input id="p_usr" autocomplete="off" spellcheck="false" autocapitalize="off">
+
+      <label for="p_pwd">Şifre</label>
+      <input id="p_pwd" type="password" autocomplete="off">
+    </div>
+
+    <div id="pf_m3u" style="display:none">
+      <label for="p_m3u">M3U liste adresi</label>
+      <input id="p_m3u" placeholder="http://.../get.php?username=...&amp;type=m3u_plus"
+             autocomplete="off" spellcheck="false" autocapitalize="off" inputmode="url">
+    </div>
 
     <button id="p_go">TV'ye gönder</button>
     <div id="pmsg"></div>
@@ -234,7 +267,8 @@ const $  = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const LS = window.localStorage;
 
-const cfg = { srv:'', usr:'', pwd:'' };
+const cfg = { mode:'xtream', srv:'', usr:'', pwd:'', m3u:'' };
+let m3uItems = [];   // M3U modunda ayrıştırılmış içerikler
 
 const st = {
   tab   : 'live',          // fav | live | vod | series
@@ -280,6 +314,7 @@ async function api(qs){
 }
 
 function streamURL(it){
+  if (it.url) return it.url;          // M3U listesinden gelen doğrudan adres
   const u = encodeURIComponent(cfg.usr), p = encodeURIComponent(cfg.pwd);
   if (it.kind === 'live')   return cfg.srv + '/live/'   + u + '/' + p + '/' + it.id + '.m3u8';
   if (it.kind === 'vod')    return cfg.srv + '/movie/'  + u + '/' + p + '/' + it.id + '.' + (it.ext || 'mp4');
@@ -294,7 +329,7 @@ function saveCfg(){
 function loadCfg(){
   try{
     const o = JSON.parse(LS.getItem('cfg') || 'null');
-    if (o && o.srv){ Object.assign(cfg, o); return true; }
+    if (o && (o.srv || o.m3u)){ Object.assign(cfg, o); return true; }
   }catch(e){}
   return false;
 }
@@ -304,7 +339,8 @@ function isFav(it){ return favs.some(f => favKey(f) === favKey(it)); }
 function toggleFav(it){
   const k = favKey(it), i = favs.findIndex(f => favKey(f) === k);
   if (i >= 0){ favs.splice(i,1); toast('Favorilerden çıkarıldı'); }
-  else       { favs.push({ kind:it.kind, id:it.id, name:it.name, ext:it.ext, logo:it.logo });
+  else       { favs.push({ kind:it.kind, id:it.id, name:it.name, ext:it.ext,
+                           logo:it.logo, url:it.url, group:it.group });
                toast('★ Favorilere eklendi'); }
   saveFavs();
   if (st.tab === 'fav') openTab('fav');
@@ -333,7 +369,68 @@ function diagnose(err){
        + 'bu iki sorunu da çözer.';
 }
 
+/* M3U (#EXTINF) listesini ayrıştır. tvg-logo / group-title desteklenir. */
+function parseM3U(text){
+  const out = [];
+  const lines = text.split(/\r?\n/);
+  let cur = null;
+
+  for (const raw of lines){
+    const L = raw.trim();
+    if (!L) continue;
+
+    if (/^#EXTINF/i.test(L)){
+      const attr = nm => {
+        const m = new RegExp(nm + '="([^"]*)"', 'i').exec(L);
+        return m ? m[1] : '';
+      };
+      const after = L.slice(L.indexOf(',') + 1).trim();
+      cur = {
+        name : after || attr('tvg-name') || 'İsimsiz',
+        logo : attr('tvg-logo'),
+        group: attr('group-title') || 'Diğer'
+      };
+    } else if (L[0] !== '#'){
+      if (cur){
+        const kind = /\/series\//i.test(L) ? 'series'
+                   : /\/movie\//i.test(L)  ? 'vod'
+                   :                          'live';
+        out.push({ kind, id:L, url:L, name:cur.name, logo:cur.logo, group:cur.group });
+        cur = null;
+      }
+    }
+  }
+  return out;
+}
+
+async function connectM3U(){
+  cfg.mode = 'm3u';
+  let u = $('#i_m3u').value.trim();
+  if (!u){ showMsg('M3U adresi gerekli.', 'bad'); return; }
+  if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+  cfg.m3u = u;
+
+  showMsg('Liste indiriliyor… (büyük listeler biraz sürebilir)', '');
+  try{
+    const r = await fetch(cfg.m3u, { cache:'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const text = await r.text();
+    const items = parseM3U(text);
+    if (!items.length) throw new Error('liste boş ya da biçimi tanınmadı');
+
+    m3uItems = items;
+    const cnt = k => items.filter(x => x.kind === k).length;
+    showMsg('✓ ' + items.length + ' içerik — ' + cnt('live') + ' kanal, '
+            + cnt('vod') + ' film, ' + cnt('series') + ' bölüm', 'good');
+    saveCfg();
+    setTimeout(start, 800);
+  }catch(err){
+    showMsg(diagnose(err), 'bad');
+  }
+}
+
 async function connect(){
+  if (cfg.mode === 'm3u') return connectM3U();
   cfg.srv = $('#i_srv').value.trim().replace(/\/+$/, '');
   cfg.usr = $('#i_usr').value.trim();
   cfg.pwd = $('#i_pwd').value;
@@ -358,6 +455,15 @@ async function connect(){
     showMsg(diagnose(err), 'bad');
   }
 }
+
+function applyMode(m, scope){
+  const tv = scope !== 'phone';
+  if (tv) cfg.mode = m;
+  $$((tv ? '#login' : '#pair') + ' .mode').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  $(tv ? '#f_xtream' : '#pf_xtream').style.display = m === 'xtream' ? '' : 'none';
+  $(tv ? '#f_m3u'    : '#pf_m3u'   ).style.display = m === 'm3u'    ? '' : 'none';
+}
+$$('#login .mode').forEach(b => b.addEventListener('click', () => applyMode(b.dataset.m)));
 
 $('#i_go').addEventListener('click', connect);
 $$('#login input').forEach(i =>
@@ -437,7 +543,7 @@ function renderItems(title){
   st.items.forEach((it, i) => {
     const r = rowEl(it.name, {
       logo : it.logo,
-      star : it.kind !== 'series' && isFav(it),
+      star : (cfg.mode === 'm3u' || it.kind !== 'series') && isFav(it),
       count: it.kind === 'live' ? (it.num || '') : ''
     });
     r.addEventListener('focus', () => { st.zone = 'items'; st.ix.items = i; });
@@ -479,6 +585,16 @@ async function openTab(tab){
     return;
   }
 
+  if (cfg.mode === 'm3u'){
+    const groups = [...new Set(m3uItems.filter(x => x.kind === tab).map(x => x.group))]
+                     .sort((a,b) => a.localeCompare(b,'tr'));
+    st.cats = [{ id:null, name:'Tümü' }, ...groups.map(g => ({ id:g, name:g }))];
+    renderCats();
+    await loadCat(0, false);
+    focusRow('cats', 0);
+    return;
+  }
+
   $('#cats').innerHTML = '<div class="hd">Yükleniyor…</div>';
   $('#items').innerHTML = '';
   try{
@@ -502,6 +618,15 @@ async function loadCat(ix, moveFocus){
   st.stack = [];
   const cat = st.cats[ix];
   if (!cat) return;
+
+  if (cfg.mode === 'm3u'){
+    st.items = m3uItems
+      .filter(x => x.kind === st.tab && (!cat.id || x.group === cat.id))
+      .map((x, i) => Object.assign({ num:i + 1 }, x));
+    renderItems(cat.name + ' · ' + st.items.length);
+    if (moveFocus) focusRow('items', 0);
+    return;
+  }
 
   $('#items').innerHTML = '<div class="hd">Yükleniyor…</div>';
   try{
@@ -570,7 +695,8 @@ function goBackList(){
 function activate(ix){
   const it = st.items[ix];
   if (!it) return;
-  if (it.kind === 'series'){ openSeries(it); return; }
+  // M3U'da bölümler zaten tek tek listelenir, alt seviye yok.
+  if (it.kind === 'series' && cfg.mode !== 'm3u'){ openSeries(it); return; }
   st.play.list = st.items.filter(x => x.kind !== 'series');
   st.play.ix   = st.play.list.indexOf(it);
   play(it);
@@ -600,6 +726,7 @@ function showOSD(){
 }
 
 async function loadEPG(it){
+  if (cfg.mode === 'm3u') return;     // M3U'da EPG API'si yok
   if (it.kind !== 'live') return;
   try{
     const r = await api('action=get_short_epg&stream_id=' + encodeURIComponent(it.id) + '&limit=2');
@@ -716,7 +843,9 @@ document.addEventListener('keydown', e => {
     if (st.zone === 'items'){
       const ix = st.ix.items;
       const it = st.items[ix];
-      if (it && it.kind !== 'series'){ toggleFav(it); renderItems(); focusRow('items', ix); }
+      if (it && (cfg.mode === 'm3u' || it.kind !== 'series')){
+        toggleFav(it); renderItems(); focusRow('items', ix);
+      }
     }
     return;
   }
@@ -852,9 +981,15 @@ async function startPairing(){
       try{
         const got = await unseal(kk.key, d.message);
         pairES.close(); pairES = null;
-        $('#i_srv').value = got.srv || '';
-        $('#i_usr').value = got.usr || '';
-        $('#i_pwd').value = got.pwd || '';
+        if (got.mode === 'm3u'){
+          applyMode('m3u');
+          $('#i_m3u').value = got.m3u || '';
+        } else {
+          applyMode('xtream');
+          $('#i_srv').value = got.srv || '';
+          $('#i_usr').value = got.usr || '';
+          $('#i_pwd').value = got.pwd || '';
+        }
         stat.className = 'good';
         stat.textContent = '✓ Bilgiler alındı';
         connect();
@@ -876,16 +1011,33 @@ function pairParams(){
   return m ? { topic:m[1], key:m[2] } : null;
 }
 
+let phoneModeSel = 'xtream';
+
+const withScheme = v => {
+  const t = (v || '').trim().replace(/\/+$/, '');
+  if (!t) return '';
+  return /^https?:\/\//i.test(t) ? t : 'http://' + t;
+};
+
 async function phoneSend(pp){
-  const m    = $('#pmsg');
-  const srv0 = $('#p_srv').value.trim().replace(/\/+$/, '');
-  const body = {
-    srv: /^https?:\/\//i.test(srv0) ? srv0 : (srv0 ? 'http://' + srv0 : ''),
-    usr: $('#p_usr').value.trim(),
-    pwd: $('#p_pwd').value
-  };
-  if (!body.srv || !body.usr){
-    m.className = 'show bad'; m.textContent = 'Sunucu ve kullanıcı adı gerekli.'; return;
+  const m = $('#pmsg');
+  let body;
+
+  if (phoneModeSel === 'm3u'){
+    body = { mode:'m3u', m3u: withScheme($('#p_m3u').value) };
+    if (!body.m3u){
+      m.className = 'show bad'; m.textContent = 'M3U adresi gerekli.'; return;
+    }
+  } else {
+    body = {
+      mode:'xtream',
+      srv : withScheme($('#p_srv').value),
+      usr : $('#p_usr').value.trim(),
+      pwd : $('#p_pwd').value
+    };
+    if (!body.srv || !body.usr){
+      m.className = 'show bad'; m.textContent = 'Sunucu ve kullanıcı adı gerekli.'; return;
+    }
   }
   m.className = 'show'; m.textContent = 'Gönderiliyor…';
   try{
@@ -896,6 +1048,7 @@ async function phoneSend(pp){
     m.className = 'show good';
     m.textContent = '✓ Gönderildi. Televizyona bakabilirsin.';
     $('#p_pwd').value = '';
+    $('#p_m3u').value = '';
   }catch(e){
     m.className = 'show bad';
     m.textContent = 'Gönderilemedi: ' + (e.message || e);
@@ -905,6 +1058,10 @@ async function phoneSend(pp){
 function phoneMode(pp){
   $('#login').style.display = 'none';
   $('#pair').classList.add('on');
+  $$('#pair .mode').forEach(b => b.addEventListener('click', () => {
+    phoneModeSel = b.dataset.m;
+    applyMode(phoneModeSel, 'phone');
+  }));
   $('#p_go').addEventListener('click', () => phoneSend(pp));
   $$('#pair input').forEach(i =>
     i.addEventListener('keydown', e => { if (e.key === 'Enter') phoneSend(pp); }));
@@ -923,10 +1080,14 @@ const pp = pairParams();
 if (pp){
   phoneMode(pp);                 // telefon: QR ile açıldı
 } else if (loadCfg()){
+  applyMode(cfg.mode || 'xtream');
   $('#i_srv').value = cfg.srv;
   $('#i_usr').value = cfg.usr;
   $('#i_pwd').value = cfg.pwd;
-  start();                       // TV: bilgiler zaten kayıtlı
+  $('#i_m3u').value = cfg.m3u || '';
+  // M3U listesi bellekte tutulur; açılışta yeniden indirilmeli.
+  if (cfg.mode === 'm3u') connectM3U();
+  else start();                  // TV: bilgiler zaten kayıtlı
 } else {
   $('#i_srv').focus();
   startPairing();                // TV: ilk kurulum, QR göster
