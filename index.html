@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TV Player</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#141821; --panel2:#1b2130; --line:#262e3d;
+    --fg:#e8ecf4; --dim:#8a93a6; --acc:#4a9eff; --acc2:#1f6fd0;
+    --ok:#3ecf8e; --err:#ff5c5c;
+    --row:44px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg); overflow:hidden;
+    font:400 20px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  button,input{font:inherit;color:inherit}
+
+  /* ---------- generic focus ---------- */
+  .f{outline:none;border-radius:8px}
+  .f:focus{
+    background:var(--acc2);
+    box-shadow:0 0 0 3px var(--acc), 0 6px 22px rgba(0,0,0,.5);
+    color:#fff;
+  }
+
+  /* ---------- login ---------- */
+  #login{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(1200px 700px at 50% 30%,#161d2b 0%,#0b0d12 70%);
+    z-index:50;
+  }
+  .card{width:min(620px,88vw);background:var(--panel);border:1px solid var(--line);
+        border-radius:18px;padding:34px 34px 28px}
+  .card h1{font-size:30px;font-weight:600;margin-bottom:4px}
+  .card p.sub{color:var(--dim);font-size:17px;margin-bottom:24px}
+  label{display:block;font-size:15px;color:var(--dim);margin:16px 0 6px}
+  .card input{
+    width:100%;padding:13px 15px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px
+  }
+  .card input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(74,158,255,.25);outline:none}
+  .card button{
+    width:100%;margin-top:26px;padding:15px;background:var(--acc2);
+    border:0;border-radius:10px;font-weight:600;cursor:pointer
+  }
+  #msg{margin-top:18px;font-size:16px;line-height:1.5;display:none}
+  #msg.show{display:block}
+  #msg.bad{color:var(--err)} #msg.good{color:var(--ok)}
+  #msg code{background:#000;padding:1px 6px;border-radius:5px;font-size:14px}
+
+  /* ---------- shell ---------- */
+  #app{display:none;height:100%;flex-direction:column}
+  #app.on{display:flex}
+
+  #tabs{
+    display:flex;gap:8px;align-items:center;
+    padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel)
+  }
+  #tabs .tab{padding:9px 20px;background:transparent;border:0;cursor:pointer;color:var(--dim)}
+  #tabs .tab.on{color:var(--fg);background:var(--panel2)}
+  #tabs .sp{flex:1}
+  #clock{color:var(--dim);font-size:17px;font-variant-numeric:tabular-nums}
+
+  #main{flex:1;display:flex;min-height:0}
+  .col{overflow:hidden auto;scrollbar-width:none}
+  .col::-webkit-scrollbar{display:none}
+  #cats{width:320px;border-right:1px solid var(--line);background:var(--panel);padding:10px}
+  #items{flex:1;padding:10px 14px}
+
+  .row{
+    display:flex;align-items:center;gap:12px;height:var(--row);
+    padding:0 14px;cursor:pointer;white-space:nowrap;overflow:hidden
+  }
+  .row .n{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .row .c{color:var(--dim);font-size:15px;font-variant-numeric:tabular-nums}
+  .row:focus .c{color:#cfe2ff}
+  .row .star{color:#ffc84a;font-size:17px}
+  .row .logo{width:34px;height:26px;object-fit:contain;flex:none;opacity:.9}
+  .hd{padding:14px 14px 8px;color:var(--dim);font-size:15px;letter-spacing:.04em;text-transform:uppercase}
+
+  /* ---------- player ---------- */
+  #pl{position:fixed;inset:0;background:#000;display:none;z-index:40}
+  #pl.on{display:block}
+  #vid{width:100%;height:100%;object-fit:contain;background:#000}
+  #osd{
+    position:absolute;left:0;right:0;bottom:0;padding:60px 40px 34px;
+    background:linear-gradient(transparent,rgba(0,0,0,.92));
+    transition:opacity .25s
+  }
+  #osd.hide{opacity:0}
+  #osd .t{font-size:32px;font-weight:600;margin-bottom:6px}
+  #osd .e{color:#b9c2d4;font-size:19px}
+  #osd .h{color:var(--dim);font-size:16px;margin-top:14px}
+  #spin{
+    position:absolute;top:50%;left:50%;width:54px;height:54px;margin:-27px 0 0 -27px;
+    border:4px solid rgba(255,255,255,.18);border-top-color:#fff;border-radius:50%;
+    animation:sp .9s linear infinite;display:none
+  }
+  #spin.on{display:block}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #perr{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;color:var(--err);font-size:22px;display:none;max-width:80%
+  }
+  #perr.on{display:block}
+
+  #toast{
+    position:fixed;bottom:34px;left:50%;transform:translateX(-50%);
+    background:#000d;border:1px solid var(--line);padding:12px 22px;border-radius:10px;
+    font-size:18px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:60
+  }
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login">
+  <div class="card">
+    <h1>TV Player</h1>
+    <p class="sub">Bilgiler yalnızca bu televizyonda saklanır.</p>
+
+    <label for="i_srv">Sunucu adresi</label>
+    <input id="i_srv" placeholder="http://sunucu.com:8080" autocomplete="off" spellcheck="false">
+
+    <label for="i_usr">Kullanıcı adı</label>
+    <input id="i_usr" autocomplete="off" spellcheck="false">
+
+    <label for="i_pwd">Şifre</label>
+    <input id="i_pwd" type="password" autocomplete="off">
+
+    <button id="i_go">Bağlan</button>
+    <div id="msg"></div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <div id="tabs">
+    <button class="tab f" data-t="fav">★ Favoriler</button>
+    <button class="tab f" data-t="live">Canlı TV</button>
+    <button class="tab f" data-t="vod">Filmler</button>
+    <button class="tab f" data-t="series">Diziler</button>
+    <div class="sp"></div>
+    <div id="clock"></div>
+  </div>
+  <div id="main">
+    <div class="col" id="cats"></div>
+    <div class="col" id="items"></div>
+  </div>
+</div>
+
+<!-- ============ PLAYER ============ -->
+<div id="pl">
+  <video id="vid" autoplay playsinline></video>
+  <div id="spin"></div>
+  <div id="perr"></div>
+  <div id="osd">
+    <div class="t" id="osd_t">—</div>
+    <div class="e" id="osd_e"></div>
+    <div class="h">▲▼ kanal değiştir · OK bilgi · Kırmızı/0 favori · Geri çık</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* =======================================================================
+   Titan OS / Chromium IPTV player — Xtream Codes
+   Kumanda: ok tuşları, OK, Geri. Kırmızı tuş veya 0 = favori.
+   ======================================================================= */
+
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const LS = window.localStorage;
+
+const cfg = { srv:'', usr:'', pwd:'' };
+
+const st = {
+  tab   : 'live',          // fav | live | vod | series
+  cats  : [],
+  items : [],
+  catIx : 0,
+  zone  : 'items',         // tabs | cats | items
+  stack : [],              // dizi sezon/bölüm geçmişi
+  title : '',              // aktif liste başlığı
+  ix    : { tabs:1, cats:0, items:0 },   // her bölgedeki odak indeksi
+  play  : { list:[], ix:-1 }
+};
+
+let favs = JSON.parse(LS.getItem('favs') || '[]');
+
+/* ---------------------------------------------------------------- utils */
+
+function toast(t, ms = 2200){
+  const el = $('#toast');
+  el.textContent = t; el.classList.add('on');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('on'), ms);
+}
+
+function tick(){
+  const d = new Date();
+  $('#clock').textContent =
+    String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+setInterval(tick, 10000); tick();
+
+/* ------------------------------------------------------------ xtream api */
+
+function apiURL(qs){
+  return cfg.srv + '/player_api.php?username=' + encodeURIComponent(cfg.usr)
+       + '&password=' + encodeURIComponent(cfg.pwd) + (qs ? '&' + qs : '');
+}
+
+async function api(qs){
+  const r = await fetch(apiURL(qs), { cache:'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function streamURL(it){
+  const u = encodeURIComponent(cfg.usr), p = encodeURIComponent(cfg.pwd);
+  if (it.kind === 'live')   return cfg.srv + '/live/'   + u + '/' + p + '/' + it.id + '.m3u8';
+  if (it.kind === 'vod')    return cfg.srv + '/movie/'  + u + '/' + p + '/' + it.id + '.' + (it.ext || 'mp4');
+  /* episode */             return cfg.srv + '/series/' + u + '/' + p + '/' + it.id + '.' + (it.ext || 'mp4');
+}
+
+/* --------------------------------------------------------------- storage */
+
+function saveCfg(){
+  LS.setItem('cfg', JSON.stringify(cfg));
+}
+function loadCfg(){
+  try{
+    const o = JSON.parse(LS.getItem('cfg') || 'null');
+    if (o && o.srv){ Object.assign(cfg, o); return true; }
+  }catch(e){}
+  return false;
+}
+function saveFavs(){ LS.setItem('favs', JSON.stringify(favs)); }
+function favKey(it){ return it.kind + ':' + it.id; }
+function isFav(it){ return favs.some(f => favKey(f) === favKey(it)); }
+function toggleFav(it){
+  const k = favKey(it), i = favs.findIndex(f => favKey(f) === k);
+  if (i >= 0){ favs.splice(i,1); toast('Favorilerden çıkarıldı'); }
+  else       { favs.push({ kind:it.kind, id:it.id, name:it.name, ext:it.ext, logo:it.logo });
+               toast('★ Favorilere eklendi'); }
+  saveFavs();
+  if (st.tab === 'fav') openTab('fav');
+}
+
+/* ----------------------------------------------------------------- login */
+
+function showMsg(text, cls){
+  const m = $('#msg');
+  m.className = 'show ' + (cls || '');
+  m.innerHTML = text;
+}
+
+function diagnose(err){
+  const pageHTTPS = location.protocol === 'https:';
+  const srvHTTP   = /^http:\/\//i.test(cfg.srv);
+
+  if (pageHTTPS && srvHTTP){
+    return 'Sayfa <code>https</code> üzerinden açık ama sunucun <code>http</code>. '
+         + 'Tarayıcı bu karışımı engelliyor.<br><br>Çözüm: player\'ı <code>http</code> ile '
+         + 'barındır, ya da sunucunun <code>https</code> adresini kullan.';
+  }
+  return 'Sunucuya ulaşılamadı: <code>' + String(err.message || err) + '</code>'
+       + '<br><br>Muhtemel sebepler: adres/port yanlış, sunucu CORS izni vermiyor, '
+       + 'veya sağlayıcı bu IP\'yi engelliyor. README\'deki <code>proxy.py</code> '
+       + 'bu iki sorunu da çözer.';
+}
+
+async function connect(){
+  cfg.srv = $('#i_srv').value.trim().replace(/\/+$/, '');
+  cfg.usr = $('#i_usr').value.trim();
+  cfg.pwd = $('#i_pwd').value;
+
+  if (!/^https?:\/\//i.test(cfg.srv)) cfg.srv = 'http://' + cfg.srv;
+  if (!cfg.srv || !cfg.usr){ showMsg('Sunucu ve kullanıcı adı gerekli.', 'bad'); return; }
+
+  showMsg('Bağlanıyor…', '');
+  try{
+    const info = await api('');
+    if (!info || !info.user_info || String(info.user_info.auth) !== '1'){
+      showMsg('Kullanıcı adı veya şifre hatalı.', 'bad');
+      return;
+    }
+    const exp = info.user_info.exp_date
+      ? new Date(info.user_info.exp_date * 1000).toLocaleDateString('tr-TR')
+      : 'süresiz';
+    showMsg('Bağlandı. Abonelik bitişi: ' + exp, 'good');
+    saveCfg();
+    setTimeout(start, 700);
+  }catch(err){
+    showMsg(diagnose(err), 'bad');
+  }
+}
+
+$('#i_go').addEventListener('click', connect);
+$$('#login input').forEach(i =>
+  i.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); }));
+
+/* ------------------------------------------------------------ list build */
+
+function rowEl(label, opts){
+  opts = opts || {};
+  const d = document.createElement('div');
+  d.className = 'row f';
+  d.tabIndex = 0;
+
+  if (opts.logo){
+    const im = document.createElement('img');
+    im.className = 'logo'; im.src = opts.logo; im.loading = 'lazy';
+    im.onerror = () => im.remove();
+    d.appendChild(im);
+  }
+  const n = document.createElement('span');
+  n.className = 'n'; n.textContent = label;
+  d.appendChild(n);
+
+  if (opts.star){
+    const s = document.createElement('span');
+    s.className = 'star'; s.textContent = '★';
+    d.appendChild(s);
+  }
+  if (opts.count != null){
+    const c = document.createElement('span');
+    c.className = 'c'; c.textContent = opts.count;
+    d.appendChild(c);
+  }
+  return d;
+}
+
+function focusTab(i){
+  const tabs = $$('#tabs .tab');
+  const j = Math.max(0, Math.min(i, tabs.length - 1));
+  st.zone = 'tabs';
+  st.ix.tabs = j;
+  tabs[j].focus();
+}
+function tabIndexOf(t){ return $$('#tabs .tab').findIndex(b => b.dataset.t === t); }
+
+function renderCats(){
+  const box = $('#cats');
+  box.innerHTML = '';
+  st.cats.forEach((c, i) => {
+    const r = rowEl(c.name);
+    r.addEventListener('focus', () => { st.zone = 'cats'; st.catIx = i; st.ix.cats = i; });
+    r.addEventListener('click', () => loadCat(i, true));
+    r.addEventListener('keydown', e => {
+      if (e.key === 'Enter'){ e.preventDefault(); loadCat(i, true); }
+    });
+    box.appendChild(r);
+  });
+}
+
+function renderItems(title){
+  if (title != null) st.title = title; else title = st.title;
+  const box = $('#items');
+  box.innerHTML = '';
+
+  if (title){
+    const h = document.createElement('div');
+    h.className = 'hd'; h.textContent = title;
+    box.appendChild(h);
+  }
+  if (!st.items.length){
+    const h = document.createElement('div');
+    h.className = 'hd'; h.textContent = 'Bu kategoride içerik yok';
+    box.appendChild(h);
+    return;
+  }
+
+  st.items.forEach((it, i) => {
+    const r = rowEl(it.name, {
+      logo : it.logo,
+      star : it.kind !== 'series' && isFav(it),
+      count: it.kind === 'live' ? (it.num || '') : ''
+    });
+    r.addEventListener('focus', () => { st.zone = 'items'; st.ix.items = i; });
+    r.addEventListener('click', () => activate(i));
+    r.addEventListener('keydown', e => {
+      if (e.key === 'Enter'){ e.preventDefault(); activate(i); }
+    });
+    box.appendChild(r);
+  });
+}
+
+function focusRow(col, ix){
+  const rows = $$('#' + col + ' .row');
+  if (!rows.length) return;
+  const j = Math.max(0, Math.min(ix, rows.length - 1));
+  // Odağı DOM'dan okuma: tarayıcı arka plandayken activeElement gecikmeli
+  // güncellendiği için navigasyon kayıyor. Kaynak doğruluk state'te.
+  st.zone = col;
+  st.ix[col] = j;
+  if (col === 'cats') st.catIx = j;
+  const el = rows[j];
+  el.focus();
+  el.scrollIntoView({ block:'nearest' });
+}
+
+/* -------------------------------------------------------------- data load */
+
+async function openTab(tab){
+  st.tab = tab;
+  st.stack = [];
+  $$('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+
+  if (tab === 'fav'){
+    st.cats = [];
+    renderCats();
+    st.items = favs.map(f => Object.assign({}, f));
+    renderItems('Favoriler (' + favs.length + ')');
+    focusRow('items', 0);
+    return;
+  }
+
+  $('#cats').innerHTML = '<div class="hd">Yükleniyor…</div>';
+  $('#items').innerHTML = '';
+  try{
+    const act = tab === 'live' ? 'get_live_categories'
+              : tab === 'vod'  ? 'get_vod_categories'
+              :                  'get_series_categories';
+    const raw = await api('action=' + act);
+    st.cats = (raw || []).map(c => ({ id:c.category_id, name:c.category_name }));
+    st.cats.unshift({ id:null, name:'Tümü' });
+    renderCats();
+    await loadCat(0, false);
+    focusRow('cats', 0);
+  }catch(err){
+    $('#cats').innerHTML = '<div class="hd">Hata</div>';
+    toast('Liste alınamadı');
+  }
+}
+
+async function loadCat(ix, moveFocus){
+  st.catIx = ix;
+  st.stack = [];
+  const cat = st.cats[ix];
+  if (!cat) return;
+
+  $('#items').innerHTML = '<div class="hd">Yükleniyor…</div>';
+  try{
+    const q = cat.id ? '&category_id=' + encodeURIComponent(cat.id) : '';
+    let raw;
+
+    if (st.tab === 'live'){
+      raw = await api('action=get_live_streams' + q);
+      st.items = (raw || []).map(s => ({
+        kind:'live', id:s.stream_id, name:s.name, num:s.num, logo:s.stream_icon, epg:s.epg_channel_id
+      }));
+    } else if (st.tab === 'vod'){
+      raw = await api('action=get_vod_streams' + q);
+      st.items = (raw || []).map(s => ({
+        kind:'vod', id:s.stream_id, name:s.name, logo:s.stream_icon, ext:s.container_extension
+      }));
+    } else {
+      raw = await api('action=get_series' + q);
+      st.items = (raw || []).map(s => ({
+        kind:'series', id:s.series_id, name:s.name, logo:s.cover
+      }));
+    }
+    renderItems(cat.name + ' · ' + st.items.length);
+    if (moveFocus) focusRow('items', 0);
+  }catch(err){
+    $('#items').innerHTML = '<div class="hd">İçerik alınamadı</div>';
+  }
+}
+
+async function openSeries(series){
+  st.stack.push({ items:st.items, title:series.name });
+  $('#items').innerHTML = '<div class="hd">Yükleniyor…</div>';
+  try{
+    const info = await api('action=get_series_info&series_id=' + encodeURIComponent(series.id));
+    const eps  = [];
+    const seasons = info && info.episodes ? info.episodes : {};
+    Object.keys(seasons).sort((a,b) => (+a) - (+b)).forEach(sn => {
+      (seasons[sn] || []).forEach(ep => {
+        eps.push({
+          kind : 'episode',
+          id   : ep.id,
+          ext  : ep.container_extension,
+          name : 'S' + String(sn).padStart(2,'0') +
+                 'B' + String(ep.episode_num).padStart(2,'0') + ' · ' + (ep.title || '')
+        });
+      });
+    });
+    st.items = eps;
+    renderItems(series.name + ' · ' + eps.length + ' bölüm');
+    focusRow('items', 0);
+  }catch(err){
+    toast('Bölümler alınamadı');
+    goBackList();
+  }
+}
+
+function goBackList(){
+  const prev = st.stack.pop();
+  if (!prev) return false;
+  st.items = prev.items;
+  renderItems(prev.title);
+  focusRow('items', 0);
+  return true;
+}
+
+function activate(ix){
+  const it = st.items[ix];
+  if (!it) return;
+  if (it.kind === 'series'){ openSeries(it); return; }
+  st.play.list = st.items.filter(x => x.kind !== 'series');
+  st.play.ix   = st.play.list.indexOf(it);
+  play(it);
+}
+
+/* ------------------------------------------------------------------ play */
+
+let hls = null, mpeg = null, osdTimer = null;
+
+function teardown(){
+  if (hls){ try{ hls.destroy(); }catch(e){} hls = null; }
+  if (mpeg){ try{ mpeg.destroy(); }catch(e){} mpeg = null; }
+  const v = $('#vid');
+  v.removeAttribute('src'); v.load();
+}
+
+function setOSD(it, epgText){
+  $('#osd_t').textContent = it.name || '';
+  $('#osd_e').textContent = epgText || '';
+  showOSD();
+}
+
+function showOSD(){
+  $('#osd').classList.remove('hide');
+  clearTimeout(osdTimer);
+  osdTimer = setTimeout(() => $('#osd').classList.add('hide'), 4500);
+}
+
+async function loadEPG(it){
+  if (it.kind !== 'live') return;
+  try{
+    const r = await api('action=get_short_epg&stream_id=' + encodeURIComponent(it.id) + '&limit=2');
+    const l = r && r.epg_listings && r.epg_listings[0];
+    if (!l) return;
+    const dec = s => { try { return decodeURIComponent(escape(atob(s))); } catch(e){ return ''; } };
+    const t   = dec(l.title);
+    const s   = l.start ? l.start.slice(11,16) : '';
+    const e   = l.end   ? l.end.slice(11,16)   : '';
+    if (t) $('#osd_e').textContent = (s && e ? s + '–' + e + '  ' : '') + t;
+  }catch(err){}
+}
+
+function play(it, url){
+  const v    = $('#vid');
+  const src  = url || streamURL(it);
+  const isTS = /\.ts(\?|$)/i.test(src);
+
+  $('#pl').classList.add('on');
+  $('#perr').classList.remove('on');
+  $('#spin').classList.add('on');
+  teardown();
+  setOSD(it, '');
+  loadEPG(it);
+  v.focus();
+
+  const fail = why => {
+    $('#spin').classList.remove('on');
+    // .m3u8 çalışmadıysa .ts ile bir kez daha dene
+    if (!isTS && it.kind === 'live' && !play._retried){
+      play._retried = true;
+      play(it, src.replace(/\.m3u8(\?|$)/i, '.ts$1'));
+      return;
+    }
+    $('#perr').textContent = 'Yayın açılamadı — ' + why;
+    $('#perr').classList.add('on');
+  };
+  play._retried = url ? play._retried : false;
+
+  v.onplaying = () => { $('#spin').classList.remove('on'); };
+  v.onerror   = () => fail('kaynak okunamadı');
+
+  if (isTS){
+    if (window.mpegts && mpegts.isSupported()){
+      mpeg = mpegts.createPlayer({ type:'mpegts', isLive:true, url:src },
+                                 { enableWorker:true, liveBufferLatencyChasing:true });
+      mpeg.attachMediaElement(v);
+      mpeg.on(mpegts.Events.ERROR, () => fail('TS akışı hatası'));
+      mpeg.load(); v.play().catch(()=>{});
+    } else { fail('MPEG-TS desteklenmiyor'); }
+    return;
+  }
+
+  const hlsNative = v.canPlayType('application/vnd.apple.mpegurl');
+  if (window.Hls && Hls.isSupported() && /\.m3u8/i.test(src)){
+    hls = new Hls({ lowLatencyMode:true, backBufferLength:30 });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (!d.fatal) return;
+      if (d.type === Hls.ErrorTypes.NETWORK_ERROR)      hls.startLoad();
+      else if (d.type === Hls.ErrorTypes.MEDIA_ERROR)   hls.recoverMediaError();
+      else fail('HLS hatası');
+    });
+    hls.loadSource(src);
+    hls.attachMedia(v);
+  } else if (hlsNative || !/\.m3u8/i.test(src)){
+    v.src = src; v.play().catch(()=>{});
+  } else {
+    fail('HLS desteklenmiyor');
+  }
+}
+
+function step(delta){
+  const L = st.play.list;
+  if (!L.length) return;
+  st.play.ix = (st.play.ix + delta + L.length) % L.length;
+  play._retried = false;
+  play(L[st.play.ix]);
+}
+
+function closePlayer(){
+  teardown();
+  $('#pl').classList.remove('on');
+  focusRow('items', Math.max(0, st.items.indexOf(st.play.list[st.play.ix])));
+}
+
+/* -------------------------------------------------------------- keyboard */
+
+const BACK = new Set(['Backspace','Escape','BrowserBack','GoBack','XF86Back']);
+const isBack = e => BACK.has(e.key) || e.keyCode === 8 || e.keyCode === 27
+                 || e.keyCode === 461 || e.keyCode === 10009 || e.keyCode === 166;
+const isRed  = e => e.keyCode === 403 || e.key === 'ColorF0Red' || e.key === '0';
+
+document.addEventListener('keydown', e => {
+  if ($('#login').style.display !== 'none') return;   // giriş ekranındayken karışma
+
+  /* ---- player ---- */
+  if ($('#pl').classList.contains('on')){
+    if (isBack(e)){ e.preventDefault(); closePlayer(); return; }
+    if (e.key === 'ArrowUp'){   e.preventDefault(); step(-1); return; }
+    if (e.key === 'ArrowDown'){ e.preventDefault(); step(+1); return; }
+    if (e.key === 'Enter'){     e.preventDefault(); showOSD(); return; }
+    if (isRed(e)){
+      e.preventDefault();
+      const cur = st.play.list[st.play.ix];
+      if (cur) toggleFav(cur);
+      return;
+    }
+    return;
+  }
+
+  /* ---- browse ---- */
+  if (isRed(e)){
+    e.preventDefault();
+    if (st.zone === 'items'){
+      const ix = st.ix.items;
+      const it = st.items[ix];
+      if (it && it.kind !== 'series'){ toggleFav(it); renderItems(); focusRow('items', ix); }
+    }
+    return;
+  }
+
+  if (isBack(e)){
+    e.preventDefault();
+    if (goBackList()) return;
+    if (st.zone === 'items'){ focusRow('cats', st.catIx); }
+    else { focusTab(tabIndexOf(st.tab)); }
+    return;
+  }
+
+  /* tabs */
+  if (st.zone === 'tabs'){
+    const tabs = $$('#tabs .tab');
+    const i    = st.ix.tabs;
+    if (e.key === 'ArrowRight'){ e.preventDefault(); focusTab(i + 1); }
+    if (e.key === 'ArrowLeft'){  e.preventDefault(); focusTab(i - 1); }
+    if (e.key === 'ArrowDown'){  e.preventDefault();
+      focusRow(st.tab === 'fav' ? 'items' : 'cats', 0);
+    }
+    if (e.key === 'Enter'){ e.preventDefault(); openTab(tabs[i].dataset.t); }
+    return;
+  }
+
+  /* columns */
+  const col = st.zone;
+  const i   = st.ix[col] || 0;
+
+  if (e.key === 'ArrowDown'){ e.preventDefault(); focusRow(col, i + 1); return; }
+  if (e.key === 'ArrowUp'){
+    e.preventDefault();
+    if (i <= 0) focusTab(tabIndexOf(st.tab));
+    else focusRow(col, i - 1);
+    return;
+  }
+  if (e.key === 'ArrowRight' && col === 'cats'){ e.preventDefault(); focusRow('items', 0); return; }
+  if (e.key === 'ArrowLeft'  && col === 'items'){ e.preventDefault(); focusRow('cats', st.catIx); return; }
+  if (e.key === 'Enter'){
+    e.preventDefault();
+    if (col === 'cats') loadCat(i, true); else activate(i);
+    return;
+  }
+});
+
+$$('#tabs .tab').forEach(b => {
+  b.addEventListener('focus', () => { st.zone = 'tabs'; });
+  b.addEventListener('click', () => openTab(b.dataset.t));
+});
+
+/* ----------------------------------------------------------------- boot */
+
+function start(){
+  $('#login').style.display = 'none';
+  $('#app').classList.add('on');
+  openTab(favs.length ? 'fav' : 'live');
+}
+
+if (loadCfg()){
+  $('#i_srv').value = cfg.srv;
+  $('#i_usr').value = cfg.usr;
+  $('#i_pwd').value = cfg.pwd;
+  start();
+} else {
+  $('#i_srv').focus();
+}
+
+/* Ayarlara dönüş: uzun süre hiçbir liste yoksa kullanıcı sıfırlayabilsin */
+window.resetPlayer = function(){ LS.removeItem('cfg'); location.reload(); };
+</script>
+</body>
+</html>
